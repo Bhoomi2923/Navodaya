@@ -22,16 +22,20 @@ expo-env.d.ts
 .metro-health-check*
 
 # debug
+*.log
 npm-debug.*
 yarn-debug.*
 yarn-error.*
 
-# macOS
+# macOS / Windows
 .DS_Store
+Thumbs.db
 *.pem
 
 # local env files
-.env*.local
+.env
+.env.*
+!.env.example
 
 # typescript
 *.tsbuildinfo
@@ -41,3 +45,18 @@ example
 # generated native folders
 /ios
 /android
+
+# Python
+__pycache__/
+*.pyc
+
+# generator previews (not bundled)
+scripts/*-preview.png
+spiral-preview.png
+
+# local tooling / editor state
+.claude/
+.sf/
+.tmp-preview/
+.devin/
+.windsurf/
