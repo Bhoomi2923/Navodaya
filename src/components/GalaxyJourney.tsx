@@ -1,9 +1,17 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, type Href } from 'expo-router';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import {
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -11,13 +19,17 @@ import {
 } from 'react-native';
 import Animated, {
   Easing,
+  Extrapolation,
   interpolate,
+  runOnJS,
+  useAnimatedScrollHandler,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
   withRepeat,
   withSequence,
   withTiming,
+  type SharedValue,
 } from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Defs, Path, RadialGradient, Stop } from 'react-native-svg';
@@ -113,6 +125,70 @@ const CURRENT_STOPS: [string, string, string] = ['#FFFDE8', '#FFE27A', '#F5B93B'
 
 type StarState = 'current' | 'locked' | 'completed';
 
+/** Scroll position + visible height shared by every planet on the journey. */
+interface JourneyZoom {
+  scrollY: SharedValue<number>;
+  viewH: SharedValue<number>;
+  reduced: boolean;
+}
+const ZoomContext = createContext<JourneyZoom | null>(null);
+
+/** Scale/fade for one planet as it passes the focus point of the screen. */
+function zoomValues(zoom: JourneyZoom, centerY: number) {
+  'worklet';
+  const focusY = zoom.scrollY.value + zoom.viewH.value * 0.45;
+  const dist = Math.abs(centerY - focusY);
+  const scale = interpolate(
+    dist,
+    [0, zoom.viewH.value * 0.25, zoom.viewH.value * 0.6],
+    [1, 0.85, 0.45],
+    Extrapolation.CLAMP
+  );
+  const opacity = interpolate(
+    dist,
+    [0, zoom.viewH.value * 0.3, zoom.viewH.value * 0.65],
+    [1, 0.9, 0.4],
+    Extrapolation.CLAMP
+  );
+  return { scale, opacity };
+}
+
+/** Wraps a planet: grows to full size as it scrolls into focus. */
+const StarScale = memo(function StarScale({
+  centerY,
+  children,
+}: {
+  centerY: number;
+  children: React.ReactNode;
+}) {
+  const zoom = useContext(ZoomContext)!;
+  const style = useAnimatedStyle(() => {
+    if (zoom.reduced) return { transform: [{ scale: 1 }], opacity: 1 };
+    const { scale, opacity } = zoomValues(zoom, centerY);
+    return { transform: [{ scale }], opacity };
+  });
+  return <Animated.View style={style}>{children}</Animated.View>;
+});
+
+/** Same fade for a planet's label group, kept near the shrinking lower edge. */
+const StarLabel = memo(function StarLabel({
+  centerY,
+  radius,
+  children,
+}: {
+  centerY: number;
+  radius: number;
+  children: React.ReactNode;
+}) {
+  const zoom = useContext(ZoomContext)!;
+  const style = useAnimatedStyle(() => {
+    if (zoom.reduced) return { opacity: 1, transform: [{ translateY: 0 }] };
+    const { scale, opacity } = zoomValues(zoom, centerY);
+    return { opacity, transform: [{ translateY: (1 - scale) * radius }] };
+  });
+  return <Animated.View style={style}>{children}</Animated.View>;
+});
+
 function JourneyPlanet({
   star,
   index,
@@ -190,46 +266,52 @@ function JourneyPlanet({
           ])
         : LOCKED_TINTS[index % LOCKED_TINTS.length];
 
+  const centerY = y + size / 2;
+
   return (
     <View style={[styles.item, { left: x - ITEM_W / 2, top: y }]}>
-      <Animated.View style={animStyle}>
-        <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={star.name}>
-          <View
-            style={[
-              styles.planet,
-              { width: size, height: size },
-              state === 'current' && styles.glowCurrent,
-              state === 'locked' && styles.glowLocked,
-            ]}>
-            <Sphere size={size} stops={stops} />
-            {state === 'current' && <OrbitRing size={size} active={active} />}
-            <View style={styles.badge}>
-              {state === 'completed' ? (
-                <Text style={styles.badgeCheck}>✓</Text>
-              ) : (
-                <Text style={styles.badgeText}>{index + 1}</Text>
-              )}
+      <StarScale centerY={centerY}>
+        <Animated.View style={animStyle}>
+          <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={star.name}>
+            <View
+              style={[
+                styles.planet,
+                { width: size, height: size },
+                state === 'current' && styles.glowCurrent,
+                state === 'locked' && styles.glowLocked,
+              ]}>
+              <Sphere size={size} stops={stops} />
+              {state === 'current' && <OrbitRing size={size} active={active} />}
+              <View style={styles.badge}>
+                {state === 'completed' ? (
+                  <Text style={styles.badgeCheck}>✓</Text>
+                ) : (
+                  <Text style={styles.badgeText}>{index + 1}</Text>
+                )}
+              </View>
             </View>
-          </View>
-        </Pressable>
-      </Animated.View>
+          </Pressable>
+        </Animated.View>
+      </StarScale>
 
-      <Text
-        style={[
-          styles.starLabel,
-          state === 'current' && { color: '#F5B93B' },
-          state === 'completed' && { color: galaxy.colors.primary },
-        ]}>
-        {state === 'current' ? 'YOUR NEXT MISSION' : state.toUpperCase()}
-      </Text>
-      <Text style={[styles.starName, state !== 'current' && styles.starNameSmall]}>
-        {star.name}
-      </Text>
-      <Text style={styles.starMeta}>
-        {state === 'locked'
-          ? 'Complete the previous star'
-          : `${star.kind} · ${star.questions} questions`}
-      </Text>
+      <StarLabel centerY={centerY} radius={size / 2}>
+        <Text
+          style={[
+            styles.starLabel,
+            state === 'current' && { color: '#F5B93B' },
+            state === 'completed' && { color: galaxy.colors.primary },
+          ]}>
+          {state === 'current' ? 'YOUR NEXT MISSION' : state.toUpperCase()}
+        </Text>
+        <Text style={[styles.starName, state !== 'current' && styles.starNameSmall]}>
+          {star.name}
+        </Text>
+        <Text style={styles.starMeta}>
+          {state === 'locked'
+            ? 'Complete the previous star'
+            : `${star.kind} · ${star.questions} questions`}
+        </Text>
+      </StarLabel>
     </View>
   );
 }
@@ -253,9 +335,33 @@ export function GalaxyJourney({ galaxyId }: { galaxyId: GalaxySection['id'] }) {
     viewport
   );
 
+  // UI-thread scroll tracking for the planet zoom effect.
+  const scrollY = useSharedValue(0);
+  const viewH = useSharedValue(Math.max(300, viewport - 140));
+  const lastLazyY = useSharedValue(0);
+  const reduced = useReducedMotion();
+  const zoom = useMemo(() => ({ scrollY, viewH, reduced }), [scrollY, viewH, reduced]);
+
+  const lazyScroll = (y: number) => {
+    onScroll({
+      nativeEvent: { contentOffset: { y } },
+    } as Parameters<typeof onScroll>[0]);
+  };
+
+  const scrollHandler = useAnimatedScrollHandler({
+    onScroll: (e) => {
+      // eslint-disable-next-line react-hooks/immutability -- reanimated shared values are mutable by design
+      scrollY.value = e.contentOffset.y;
+      // Feed lazy mounting from the worklet, throttled by distance.
+      if (Math.abs(e.contentOffset.y - lastLazyY.value) > 40) {
+        lastLazyY.value = e.contentOffset.y;
+        runOnJS(lazyScroll)(e.contentOffset.y);
+      }
+    },
+  });
+
   const columnWidth = Math.min(width, MAX_COLUMN_WIDTH);
   const contentHeight = TOP_PAD + (stars.length - 1) * ROW_H + PLANET_CURRENT + 90 + BOTTOM_PAD;
-  const [bg, setBg] = useState({ width: 0, height: 0 });
 
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -305,6 +411,11 @@ export function GalaxyJourney({ galaxyId }: { galaxyId: GalaxySection['id'] }) {
         style={StyleSheet.absoluteFill}
       />
 
+      {/* Window-sized sky, fixed behind the scrolling journey. */}
+      <View style={StyleSheet.absoluteFill} pointerEvents="none">
+        <StarField width={width} height={viewport} />
+      </View>
+
       <SafeAreaView style={styles.flex} edges={['top']}>
         {/* Fixed header. */}
         <View style={styles.header}>
@@ -327,25 +438,19 @@ export function GalaxyJourney({ galaxyId }: { galaxyId: GalaxySection['id'] }) {
           sets.
         </Text>
 
-        <ScrollView
+        <Animated.ScrollView
           style={[styles.flex, styles.stretch]}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
-          onScroll={onScroll}
-          scrollEventThrottle={64}>
-          <View
-            style={[styles.page, { height: contentHeight }]}
-            onLayout={(e) =>
-              setBg({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })
-            }>
-            {/* Shared space layer spanning the whole journey, full window width. */}
-            {bg.height > 0 && (
-              <View style={StyleSheet.absoluteFill} pointerEvents="none">
-                <StarField width={bg.width} height={bg.height} />
-              </View>
-            )}
-
+          onScroll={scrollHandler}
+          scrollEventThrottle={16}
+          onLayout={(e) => {
+            // eslint-disable-next-line react-hooks/immutability -- reanimated shared values are mutable by design
+            viewH.value = e.nativeEvent.layout.height;
+          }}>
+          <View style={[styles.page, { height: contentHeight }]}>
             {/* Only the zigzag is width-limited and centred. */}
+            <ZoomContext.Provider value={zoom}>
             <View style={{ width: columnWidth, height: contentHeight, alignSelf: 'center' }}>
               {/* Dashed connectors, behind the planets. */}
               <Svg
@@ -412,8 +517,9 @@ export function GalaxyJourney({ galaxyId }: { galaxyId: GalaxySection['id'] }) {
                 )
               )}
             </View>
+            </ZoomContext.Provider>
           </View>
-        </ScrollView>
+        </Animated.ScrollView>
       </SafeAreaView>
 
       {/* Transient toast for locked taps / quiz placeholder. */}

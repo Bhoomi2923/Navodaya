@@ -1,12 +1,11 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useState } from 'react';
 import {
-  Animated,
   Platform,
   ScrollView,
   StyleSheet,
   useWindowDimensions,
-  View,
+  View
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -29,38 +28,25 @@ export default function HomeScreen() {
   const spiralSize = Math.min(columnWidth * 0.9, 360);
   const ellipticalSize = Math.min(columnWidth * 0.9, 360);
   const clusterSize = Math.min(columnWidth * 0.9, 360);
-  const [bg, setBg] = useState({ width: 0, height: 0 });
   const [skyReady, setSkyReady] = useState(false);
-  const [skyFade] = useState(() => new Animated.Value(0));
 
   const lazy = useLazyCards(GALAXIES.length, windowHeight);
 
-  // Render the shared star layer two frames in, then fade it in, so the hero
-  // and the first card appear immediately. A plain timeout guarantees the sky
-  // can never stay hidden if the frames are delayed.
+  // Render the shared star layer two frames in, so the hero and the first
+  // card appear immediately. A plain timeout guarantees the sky can never
+  // stay hidden if the frames are delayed.
   useEffect(() => {
     let raf2 = 0;
     const raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => {
-        setSkyReady(true);
-        Animated.timing(skyFade, {
-          toValue: 1,
-          duration: 400,
-          useNativeDriver: Platform.OS !== 'web',
-          isInteraction: false,
-        }).start();
-      });
+      raf2 = requestAnimationFrame(() => setSkyReady(true));
     });
-    const failSafe = setTimeout(() => {
-      setSkyReady(true);
-      skyFade.setValue(1);
-    }, 600);
+    const failSafe = setTimeout(() => setSkyReady(true), 600);
     return () => {
       cancelAnimationFrame(raf1);
       cancelAnimationFrame(raf2);
       clearTimeout(failSafe);
     };
-  }, [skyFade]);
+  }, []);
 
   // Warm the next card's image cache slightly early to avoid pop-in.
   useEffect(() => {
@@ -71,13 +57,24 @@ export default function HomeScreen() {
   }, [lazy.mounted]);
 
   return (
-    <View style={styles.root}>
+    <View
+      style={[
+        styles.root,
+        Platform.OS === 'web' && ({ height: '100vh', overflow: 'hidden' } as object),
+      ]}>
       {/* Deep indigo-to-purple backdrop filling the whole window. */}
       <LinearGradient
         colors={['#07031A', '#120A3A', '#1E0F4F', '#2A1470', '#1B1550']}
         locations={[0, 0.25, 0.55, 0.8, 1]}
         style={StyleSheet.absoluteFill}
       />
+
+      {/* Window-sized sky, fixed behind the scrolling content. */}
+      {skyReady && (
+        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+          <StarField width={width} height={windowHeight} />
+        </View>
+      )}
 
       <SafeAreaView style={styles.flex} edges={['top']}>
         <TopBar />
@@ -87,19 +84,7 @@ export default function HomeScreen() {
           contentContainerStyle={styles.scrollContent}
           onScroll={lazy.onScroll}
           scrollEventThrottle={64}>
-          <View
-            style={[styles.page, { paddingBottom: insets.bottom + 16 }]}
-            onLayout={(e) =>
-              setBg({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })
-            }>
-            {/* One shared space layer spanning the whole scrollable page. */}
-            {bg.height > 0 && skyReady && (
-              <Animated.View
-                style={[StyleSheet.absoluteFill, { opacity: skyFade }]}
-                pointerEvents="none">
-                <StarField width={bg.width} height={bg.height} />
-              </Animated.View>
-            )}
+          <View style={[styles.page, { paddingBottom: insets.bottom + 16 }]}>
             <View style={[styles.column, { width: columnWidth }]}>
               <Hero />
               {GALAXIES.map((galaxy, index) => (

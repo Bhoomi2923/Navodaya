@@ -1,15 +1,14 @@
 import type { Question, StarKit } from '@/lib/content/types';
 import { validateQuestion } from '@/lib/content/validateQuestion';
 
-import matStar01 from './mental-ability/star-01.json';
-
 /**
  * Star kits keyed by the galaxy ids from constants/galaxies.ts
  * ('mental' | 'arithmetic' | 'language'), then 1-based star index.
+ * Kits are required lazily so a star's JSON is only bundled/parsed on demand.
  */
-const KITS: Partial<Record<string, Record<number, StarKit>>> = {
+const KIT_LOADERS: Partial<Record<string, Record<number, () => StarKit>>> = {
   mental: {
-    1: matStar01 as unknown as StarKit,
+    1: () => require('./mental-ability/star-01.json') as StarKit,
   },
 };
 
@@ -48,6 +47,6 @@ function prepare(kit: StarKit): StarKit {
 
 /** The kit for a star, or null when the star has no content yet. */
 export function getStarKit(galaxyId: string, starIndex: number): StarKit | null {
-  const kit = KITS[galaxyId]?.[starIndex];
-  return kit ? prepare(kit) : null;
+  const loader = KIT_LOADERS[galaxyId]?.[starIndex];
+  return loader ? prepare(loader()) : null;
 }
